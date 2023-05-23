@@ -1,0 +1,17 @@
+[Unit]
+Description=Tempmon temperature and humidity monitor
+After=network.target
+After=node_exporter.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=+/usr/bin/mkdir --mode=755 -p "/var/run/node_exporter/textfile-collector" && sleep 1
+ExecStart=/usr/local/bin/tempmon_collector.py -s "2" -o "/var/run/node_exporter/textfile-collector/tempmon.prom"
+Restart=on-failure
+RestartSec=30
+LimitNOFILE=32
+
+[Install]
+WantedBy=multi-user.target
+
