@@ -1,4 +1,4 @@
-# Temperature & Humidity Monitor
+# Simple Temperature & Humidity Monitor
 
 Node-exporter textfile collector for Temp & Humidity readings produced
 from the companion firmware.
@@ -28,11 +28,12 @@ they are also ephemeral, it is best to put it in a filesystem using the
 
 ## Hardware
 
-The hardware device consists of a Raspberry Pico (RP2040) chip on a
-board such as the Seeed XIAO or the Adafruit Trinkey QT2040, although
-the exact form doesn't matter.
+The hardware device consists of a Raspberry Pico (RP2040) chip on a board
+such as the Seeed XIAO RP2040 or the Adafruit Trinkey QT2040, although
+the exact form doesn't matter. The board layout included here was for the
+XIAO.
 
-The basic board is connected to an AM2320 temperature & humidity monitor
+The MCU board is connected to an AM2320 temperature & humidity monitor
 using the Pico's I2C bus. Two 3K pullup resistors are required on the
 I2C lines.
 
@@ -54,6 +55,9 @@ it to the serial port and OLED (if present).
 The data is written to the serial port using JSON. It is important to
 the host collector that it is all on one line.
 
+The Seeed XIAO RP2040 includes a Neopixel which the firmware writes a
+colour to that reflects (very imperfectly) the measurements.
+
 ## Software
 
 The Host collector code is ironically more complex, becuase it has to
@@ -64,12 +68,29 @@ showing whether the data source is present or not.
 Most of the reader uses a Stream object to represent either PySerial
 or a normal File source.
 
-** bug: currently the File source is broken because readline\_partial()
-wants to use .in\_waiting, which is not present for Files.
-
 Data from the serial port is read in as it comes into a buffer, and
 once a whole line is available in the buffer that is extracted and
 parsed as Json. The JSON dictionary is then written to a new text file
 using wr\_param(), and the whole process restarts.
+
+## Accuracy
+
+The AM2320 is not marketed as an especially accurate device and has
+not shown itself to be so... expect values within about 2 deg C 
+and something like 5% RH. I did investigate calibration of my 
+particular device and on that basis the firmware adjusts the returned
+measurements before passing them on. YMMV.
+
+I have found the relative (minute-on-minute) measurements to reflect
+reality with more precision, though: a sequence of readings in a
+cooling or warming environment show that cooling or warming properly.
+
+## Known issues:
+
+* Currently the File source is broken because readline\_partial()
+wants to use .in\_waiting, which is not present for Files.
+
+* The firmware expects the Neopixel to exist, which it will for
+the XIAO but for other boards it may not.
 
 
