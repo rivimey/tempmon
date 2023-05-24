@@ -14,7 +14,8 @@ such as the Seeed XIAO RP2040 or the Adafruit Trinkey QT2040, although
 the exact form doesn't matter. The board layout included here was for the
 XIAO:
 
-[Board layout for Tempmon](hardware/TempMon-PCB.png)
+   Board layout for Tempmon
+![](hardware/TempMon-PCB.png)
 
 The board was designed using [DiyLC](https://bancika.github.io/diy-layout-creator/) which
 was simple enough for this type of project. It was constructed on 
@@ -30,7 +31,8 @@ The device also supports an SSD1306-based 128x32 OLED (of which there
 are many sources), and if present it will show the current readings.
 
 The whole unit is connected to the host PC using the USB serial port,
-which appears on a Linux host at least as /dev/ttyACM?.
+which appears on a Linux host, at least, as /dev/ttyACM?. Consider
+using the device links under /dev/serial/by-id/
 
 # Firmware
 
@@ -56,7 +58,7 @@ Update the measurement time interval by changing the STEP value (in
 seconds). Changing it below the time taken to do a complete measurement
 loop will result in poor results. I suggest a minimum of 1s.
 
-Similarly, adjust `def temp\_calib()` and `def humid\_calib()` as required
+Similarly, adjust `def temp_calib()` and `def humid_calib()` as required
 for your specific sensor, or have them return the input value unchanged.
 
 The pins used for I2C are usually defined by the board. If you need to
@@ -80,6 +82,9 @@ A simple converter is required to read data from the device's serial
 port and write it in the correct format to node\_exporter's 
 text\_collector directory.
 
+![](collector/Grafana-panel.png)
+   A Panel in Grafana showing the results.
+
 The Host collector code is ironically more complex than the firmware,
 becuase it has to report `samples` whether or not info is coming on the
 serial port, or even if there is no port! This is so it can report the
@@ -96,22 +101,22 @@ using wr\_param(), and the whole process restarts.
 
 ## Command Line options
 
-usage: tempmon\_collector.py [-h] [-i PORT] [-T] [-b BAUD] [-o PROMFILE] [-O]
+    usage: tempmon_collector.py [-h] [-i PORT] [-T] [-b BAUD] [-o PROMFILE] [-O]
 
-Serial-to-promfile converter for TempMon gadget. See the Prometheus 'node\_exporter' for details of textfile-
-collector promfiles. Locate the output file on a tmpfs (memory) file system.
+    Serial-to-promfile converter for TempMon gadget. See the Prometheus 'node_exporter' for details of textfile-
+    collector promfiles. Locate the output file on a tmpfs (memory) file system.
 
-options:
-  -h, --help            show this help message and exit
-  -i PORT, --serial PORT
-                        Serial port to read
-  -T, --tty             Treat input PORT as an OS serial port (default to read as a file)
-  -b BAUD, --baud BAUD  Serial port baud rate (only if -T)
-  -o PROMFILE, --promfile PROMFILE
-                        Full path to promfile to write to
-  -O, --stdout          Write results to stdout as well as promfile
+    options:
+      -h, --help            show this help message and exit
+      -i PORT, --serial PORT
+                            Serial port to read
+      -T, --tty             Treat input PORT as an OS serial port (default to read as a file)
+      -b BAUD, --baud BAUD  Serial port baud rate (only if -T)
+      -o PROMFILE, --promfile PROMFILE
+                            Full path to promfile to write to
+      -O, --stdout          Write results to stdout as well as promfile
 
-(c) 2023 Ruth Ivimey-Cook
+    (c) 2023 Ruth Ivimey-Cook
 
 ## Systemd Service file
 
