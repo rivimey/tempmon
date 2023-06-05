@@ -26,11 +26,11 @@ button_b.direction = digitalio.Direction.INPUT
 button_b.pull = digitalio.Pull.UP
 
 def temp_calib(meas: float) -> float:
-    return meas - 2
+    return meas - 1
 
 
 def humid_calib(meas: float) -> float:
-    return meas - 2
+    return meas - 1
 
 
 def drawtext(text, color=1, point=(0, 0), scale=1):
