@@ -119,14 +119,15 @@ class AM2320:
 
             # Send command to read register
             cmd = [AM2320_CMD_READREG, register & 0xFF, length]
-            # print("cmd: %s" % [hex(i) for i in cmd])
+            # print("readreg cmd: %s" % [hex(i) for i in cmd])
             i2c.write(bytes(cmd))
             time.sleep(0.002)  # wait 2 ms for reply
             result = bytearray(length + 4)  # 2 bytes pre, 2 bytes crc
             i2c.readinto(result)
-            # print("$%02X => %s" % (register, [hex(i) for i in result]))
+            # print("> r%d => %s" % (register, [hex(i) for i in result]))
             # Check preamble indicates correct readings
             if result[0] != 0x3 or result[1] != length:
+                print("I2C read failure")
                 raise RuntimeError("I2C read failure")
             # Check CRC on all but last 2 bytes
             crc1 = struct.unpack("<H", bytes(result[-2:]))[0]
@@ -138,13 +139,27 @@ class AM2320:
     @property
     def temperature(self) -> float:
         """The measured temperature in Celsius."""
-        temperature = struct.unpack(">H", self._read_register(AM2320_REG_TEMP_H, 2))[0]
-        if temperature >= 32768:
-            temperature = 32768 - temperature
-        return temperature / 10.0
+        regval = self._read_register(AM2320_REG_TEMP_H, 2)
+        # Unpack big-endian (hi then lo) bytes as _unsigned_ 16bit int
+        temp_i = struct.unpack(">H", regval)[0]
+        # print("temp: %d x256 + %d => %d => " % (regval[0], regval[1], temp_i))
+        if temp_i >= 32768:
+            # One's complement negation (bit 15 is sign, remaining bits value).
+            # 32768 is '-0', 32769 is -1, 32770 is -2, 32778 is -10, etc
+            temp_i = 32768 - temp_i
+        temp_f = temp_i / 10.0
+        # print("temp: %f" % (temp_f))
+        return temp_f
 
     @property
     def relative_humidity(self) -> float:
         """The measured relative humidity in percent."""
-        humidity = struct.unpack(">H", self._read_register(AM2320_REG_HUM_H, 2))[0]
-        return humidity / 10.0
+        regval = self._read_register(AM2320_REG_HUM_H, 2)
+        # Unpack big-endian (hi then lo) bytes as _unsigned_ 16bit int
+        # Value should be in range 0..1_000) rep. 0% to 100.0%, but sensor
+        # isn't specified up to 100% RH. So for the Hi byte only bottom
+        # 2 bits are used.
+        hum_i = struct.unpack(">H", regval)[0]
+        hum_f = hum_i / 10.0
+        # print("temp: %f" % (hum_f))
+        return hum_f
