@@ -2,11 +2,15 @@
 
 import sys
 import os
-import io
 import serial
 import argparse
 import json
 import time
+import threading
+import queue
+
+from promfile import PromFile
+from serialreadline import SerialReadlineThread, LineItem
 
 __version__ = "1.0"
 
@@ -16,126 +20,55 @@ in_baud = 9600
 in_nbits = serial.EIGHTBITS
 in_parity = serial.PARITY_NONE
 in_stopb = serial.STOPBITS_ONE
+maxPromfileAge = 7  # secs
 
 out_filename="/var/run/node_exporter/textfile-collector/tempmon.prom"
 
 prefix = "airtemp_"
 
-partial_line = ""
-def readline_partial(ser):
-    global partial_line
 
-    # Check if incoming bytes are waiting to be read from the serial input
-    # buffer.
-    retline = None
-    if ser.in_waiting > 0:
-        d = ser.readline()
-        d = d.decode('latin1')
-        if len(d) > 0:
-            partial_line += d
-            parts = d.split("\n", maxsplit=1)
-            if len(parts) > 1:
-                retline = parts[0]
-                parts.pop(0)
+def track_timestamp(data: dict, tod: float, starttime: float, start_tod: float):
+    if 'time' in data:
+        # Reset our state if needed.
+        if starttime < 0 or starttime > data['time']:   # first time round or rebooted
+            starttime, start_tod = data['time'], tod
 
-            if len(parts) > 0:
-                partial_line = parts[0]
-            else:
-                partial_line = ""
+        # Calculate what time the sensor would tell if it had full
+        # unix epoch time available...
+        calc_tod = (data['time'] - starttime) + start_tod
+        diff = calc_tod - tod
+        if diff < -1.0 or diff > 0.5:
+            print(f"{get_tod()}: Time drifting: {diff}", file=sys.stderr)
+        if diff < -1.5 or diff > 1.0:
+            starttime = get_tod()
+            print(f"{get_tod()}: Time reset: was {diff}", file=sys.stderr)
+    return starttime, start_tod
 
-    return retline
-            
+
+def try_get_input(serial_queue, tty_open, line):
+    # Try to read a line of text
+    #print(f"Check queue:", file=sys.stderr)
+    try:
+        item = serial_queue.get(block=True, timeout=1)
+        if item.status == LineItem.OK:
+            #print(f"Got line {item.line}", file=sys.stderr)
+            line = item.line.rstrip()
+            tty_open = True
+
+        else:  # if item.status == LineItem.ENOPORT:
+            tty_open = False
+
+    except queue.Empty:
+        pass
+
+    return tty_open, line
+
 
 def get_tod():
+    """
+    Return the current timestamp to 3 d.p
+    """
     return round(time.time(), 3)
-
-def open_tty(tty_open, msg_suppress):
-    global args
-
-    tty_in = None
-    #print(f"{get_tod()}: Open tty", file=sys.stderr)
-    try:
-        tty_open = False
-        if args.tty:
-            print(f"{get_tod()}: Open tty=serial", file=sys.stderr)
-            # tty_in = serial.Serial(args.serial, baudrate=args.baud, bytesize=in_nbits, parity=in_parity, stopbits=in_stopb, timeout=10)
-
-            if tty_in is None:
-                tty_in = serial.Serial(timeout=0.1)
-                print("C", tty_in)
-
-            if tty_in is not None:
-                tty_in.port = args.serial
-                tty_in.baudrate = args.baud
-                tty_in.parity = in_parity
-                tty_in.stopbits = in_stopb
-                tty_in.open()
-
-            if tty_in is not None and tty_in.is_open:
-                tty_open = True
-                print(f"{get_tod()}: Opened Serial", file=sys.stderr)
-            else:
-                print(f"{get_tod()}: Open Serial failed {tty_in}", file=sys.stderr)
-        else:
-            print(f"{get_tod()}: Open tty=file", file=sys.stderr)
-            tty_in = open(args.serial, "r")
-            tty_open = True
-        msg_suppress = False
-
-    except OSError as ex:
-        tty_open = False
-        print(f"{get_tod()}: Open exception", file=sys.stderr)
-        if not msg_suppress:
-            tod = get_tod()
-            print(f"{tod}: Open FileError: {ex}", file=sys.stderr)
-            # Only half as often as we try opening it:
-            msg_suppress = not msg_suppress
-    except Exception as ex:
-        tty_open = False
-        print(f"{get_tod()}: Open Exception: {ex}", file=sys.stderr)
-
-    return tty_in, tty_open, msg_suppress
-
-
-def wr_param(outf: io.TextIOBase, vname: str, value: float, vtype: str = "gauge", keys: dict = {}):
-    global args
-    global prefix
-
-    vname = prefix + vname
-    value = f"{value:8.3f}"
-
-    kv = [f"{k}=\"{v}\"" for k, v in keys.items()]
-    k_str = ",".join(kv)
-
-    print(f"# TYPE {vname} {vtype}", file=outf)
-    print(vname + "{" + k_str +"} " + str(value), file=outf)
-
-
-def write_outfile(fout: io.TextIOBase, is_open: bool, line: str, tod: float) -> dict:
-    wr_param(fout, "info", 1, keys={"name": "tempmon", "version": __version__, "tty": in_port} )
-    wr_param(fout, "up", 1 if is_open and len(line) > 0 else 0)
-
-    # only lines starting '{' are json, ignore others.
-    if is_open and len(line) > 0 and line[0] == '{':
-
-        d = json.loads(line)
-        wr_param(fout, "temp", d["temp"], keys={"unit": "C"})         # centigrade
-        wr_param(fout, "humidity", d["humidity"], keys={"unit": "%"}) # RH %
-        wr_param(fout, "uptime", d["time"]/100, keys={"unit": "s"})   # from msec to sec
-        return d
-
-    return {}
-
-
-def write_promfile(out_file: str, is_open: bool, line: str, tod: float):
-    global args
-
-    write_outfile(sys.stdout, is_open, line, tod)
-
-    with open(out_file, "w", buffering=1) as fout:
-        d = write_outfile(fout, is_open, line, tod)
-
-    return d
 
 
 def main():
@@ -160,68 +93,45 @@ def main():
     print(f"Serial {'is' if args.tty else 'is not'} treated as a tty")
 
     # Objective: write a promfile even if no serial port.
-    suppress = False
 
-    # value of d[time] and time.time() when last reset
+    serial_queue = queue.SimpleQueue()
+    serialIn = threading.Thread(
+            target=SerialReadlineThread,
+            args=(serial_queue, args.serial, args.baud, in_nbits, in_parity, in_stopb),
+            daemon=True)
+    serialIn.start()
+
+    # value of data[time] and time.time() when last reset
     starttime, start_tod = -1, get_tod()
+    promFile = PromFile(prefix, args.promfile, args)
 
+    print(f"{get_tod()}: enter main loop", file=sys.stderr)
     tty_open = False
     while True:
-        tod = get_tod()
         line = ""
-
-        # Other end can close too...
-        #present = os.path.exists(args.serial)
-        #if not present and tty_open:
-        #    try:
-        #        tty_in.close()
-        #    except:
-        #        pass
-        #    tty_open = False
-
-        # Try to open our input
-        if not tty_open:
-            (tty_in, tty_open, suppress) = open_tty(tty_open, suppress)
+        tod = get_tod()
 
         try:
-            # Try to read a line of text
-            if tty_open:
-                p = readline_partial(tty_in)
-                if p is not None:
-                    line = p.rstrip()
-                    tod = get_tod()
-        except Exception as ex:
-            print(f"{tod}: Readline Exception: {ex}", file=sys.stderr)
+            promFile.delete_expired_promfiles(maxAge=maxPromfileAge)
 
+            tty_open, line = try_get_input(serial_queue, tty_open, line)
 
-        if len(line) == 0:
-            time.sleep(0.1)
-            continue
+            # If we haven't accumulated a complete line yet, that's all.
+            if len(line) == 0:
+                continue
 
-        #print(f"{tod}: Read line=\"{line}\"", file=sys.stderr)
+            data = promFile.write_promfile(tty_open, line, tod)
+            starttime, start_tod = track_timestamp(data, tod, starttime, start_tod)
 
-        try:
-            # Try to write the text as a promfile
-            d = write_promfile(args.promfile, tty_open, line, tod)
-
-            if 'time' in d:
-                # Reset our state if needed.
-                if starttime < 0 or starttime > d['time']:   # first time round or rebooted
-                    starttime, start_tod = d['time'], tod
-                    starttime, start_tod = d['time'], tod
-
-                calc_tod = (d['time'] - starttime) + start_tod
-                diff = calc_tod - tod
-                if diff < -0.1 or diff > 0.1:
-                    print(f"{tod}: Time drifting: {diff}", file=sys.stderr)
-            #print(f"{tod}: Written", file=sys.stderr)
-            
-        #except Exception as ex:
         except KeyboardInterrupt as ex:
-            print(f"{tod}: Write Exception: {ex}", file=sys.stderr)
+            raise ex
+
+        except Exception as ex:
+            print(f"{get_tod()}: Exception: {ex}", file=sys.stderr)
             time.sleep(0.25)
 
-        time.sleep(0.25 if tty_open else 5)
+        sys.stderr.flush()
+        time.sleep(0.25)
 
 
 if __name__ == '__main__':

@@ -9,7 +9,7 @@ User=root
 ExecStartPre=+/usr/bin/mkdir --mode=755 -p "/var/run/node_exporter/textfile-collector" && sleep 1
 ExecStart=/usr/local/bin/tempmon_collector.py -T -o "/var/run/node_exporter/textfile-collector/tempmon.prom"
 Restart=on-failure
-RestartSec=30
+RestartSec=20
 LimitNOFILE=32
 
 [Install]
