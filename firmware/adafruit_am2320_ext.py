@@ -49,11 +49,11 @@ AM2320_DEFAULT_ADDR = const(0x5C) # Docs mention 0xB8: that val includes r/w bit
 AM2320_CMD_READREG = const(0x03)
 AM2320_CMD_WRITEREG = const(0x10) # Very little point in writes...
 
-AM2320_DEVSETUP_T = const(0.1)    # Time to wait to try again if initial
+AM2320_DEVSETUP_T = 0.1    # Time to wait to try again if initial
                                   # i2c connect fails.
-AM2320_DEVWAKE_T = const(0.003)   # After wakeup request, max time before
+AM2320_DEVWAKE_T = 0.003   # After wakeup request, max time before
                                   # sending a cmd is 3ms (min 800us)
-AM2320_DEVREAD_T = const(0.0015)  # After read reg request, time to wait 1.5ms
+AM2320_DEVREAD_T = 0.0015  # After read reg request, time to wait 1.5ms
 
 AM2320_DEVHIBER_T = const(2000)   # Millisecs after which we assume dev
                                   # has hibernated.
@@ -79,6 +79,9 @@ AM2320_REG_STATUS = const(0xF)    # One byte, all bits 'reserved'
 #   0x82: write data beyond the scope
 #   0x83: CRC checksum error
 #   0x84: Write disabled
+
+def time_monotonic_ms():
+    return int(time.monotonic_ns() / 1_000_000)
 
 def _crc16(data: bytearray) -> int:
     crc = 0xFFFF
@@ -135,7 +138,7 @@ class AM2320Cached:
     def __init__(self, i2c_bus: I2C, address: int = AM2320_DEFAULT_ADDR):
 
         self._regbuffer = None
-        self._lastread_time = self._lastwrite_time = time.monotonic_ms()
+        self._lastread_time = self._lastwrite_time = time_monotonic_ms()
         self._expires = AM2320_CACHE_EXP_T # millisecs
 
         for _ in range(3):
@@ -147,6 +150,13 @@ class AM2320Cached:
                 pass
             time.sleep(AM2320_DEVSETUP_T)
         raise ValueError("AM2320 not found")
+
+    @property
+    def expiry(self):
+        """
+        The expiry time in milliseconds since the last read.
+        """
+        return self._expires
 
     @expiry.setter
     def expiry(self, val):
@@ -160,13 +170,6 @@ class AM2320Cached:
             self._expires = val
         else:
             raise RuntimeError("expiry too short")
-
-    @property
-    def expiry(self):
-        """
-        The expiry time in milliseconds since the last read.
-        """
-        return self._expires
 
     def reset_cache(self):
         """
@@ -193,11 +196,11 @@ class AM2320Cached:
             # This fn can only read temp & humidity & only as BE int16.
             raise RuntimeError("am2320 read reg error")
 
-        now = time.monotonic_ms()
+        now = time_monotonic_ms()
         if self._regbuffer is None or (now - self.lastread_time) > self._expires:
             # HUM is 0, TEMP is 2, so read HUM..HUM+4 reads both.
             self._regbuffer = self._read_register(AM2320_REG_HUM_H, 4)
-            self._lastread_time = time.monotonic_ms()
+            self._lastread_time = time_monotonic_ms()
 
             # Device auto-sleeps after reading temp/hum. so will need
             # wake procedure to restart it.
@@ -211,11 +214,11 @@ class AM2320Cached:
         Read registers from the AM2320 from the start reg for length bytes.
         Returns a bytearray of the values.
         """
-	    if length > 10 or register > 0x10:
+        if length > 10 or register > 0x10:
             raise RuntimeError("am2320 read reg error")
 
         with self._i2c as i2c:
-            now = time.monotonic_ms()
+            now = time_monotonic_ms()
             # Will dev have gone back to sleep yet?
             if (now - self._lastwrite_time) > AM2320_DEVHIBER_T:     # 1s
                 # wake up sensor
@@ -236,7 +239,7 @@ class AM2320Cached:
             result = bytearray(length + 4)  # 2 bytes pre, 2 bytes crc
             i2c.readinto(result)
 
-            self._lastwrite_time = time.monotonic_ms()
+            self._lastwrite_time = time_monotonic_ms()
 
             # print("> r%d => %s" % (register, [hex(i) for i in result]))
             # Check preamble indicates correct readings
