@@ -1,3 +1,6 @@
+import usb_cdc
+usb_cdc.enable(console=True, data=True)
+
 import usb_midi
 usb_midi.disable()
 
