@@ -3,10 +3,14 @@
 # SPDX-License-Identifier: MIT
 
 """
-`adafruit_am2320`
+`rivimey_am2320_cached`
 ====================================================
 
 This is a CircuitPython driver for the AM2320 temperature and humidity sensor.
+
+* Author(s): Ruth Ivimey-Cook
+
+based on the adafruit_am2320 driver created by:
 
 * Author(s): Limor Fried
 
@@ -41,7 +45,7 @@ except ImportError:
     pass
 
 __version__ = "0.0.0+auto.0"
-__repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_am2320.git"
+__repo__ = "https://github.com/rivimey/CircuitPython_am2320.git"
 
 
 AM2320_DEFAULT_ADDR = const(0x5C) # Docs mention 0xB8: that val includes r/w bit
@@ -49,17 +53,17 @@ AM2320_DEFAULT_ADDR = const(0x5C) # Docs mention 0xB8: that val includes r/w bit
 AM2320_CMD_READREG = const(0x03)
 AM2320_CMD_WRITEREG = const(0x10) # Very little point in writes...
 
-AM2320_DEVSETUP_T = 0.1    # Time to wait to try again if initial
-                                  # i2c connect fails.
-AM2320_DEVWAKE_T = 0.003   # After wakeup request, max time before
-                                  # sending a cmd is 3ms (min 800us)
-AM2320_DEVREAD_T = 0.0015  # After read reg request, time to wait 1.5ms
+AM2320_DEVSETUP_T = 0.1           # Time to wait to try again if initial
+                                  #     i2c connect fails.
+AM2320_DEVWAKE_T = 0.003          # After wakeup request, max time before
+                                  #     sending a cmd is 3ms (min 800us)
+AM2320_DEVREAD_T = 0.0015         # After read reg request, time to wait 1.5ms
 
 AM2320_DEVHIBER_T = const(2000)   # Millisecs after which we assume dev
-                                  # has hibernated.
+                                  #     has hibernated.
 AM2320_CACHE_EXP_T = const(1992)  # Default millisecs after which T, H cache
-                                  # has expired. Change with am.expiry = val.
-                                  # Device sleeps for ~2s after measurements.
+                                  #     has expired. Change with am.expiry = val.
+                                  #     Device sleeps for ~2s after measurements.
 
 AM2320_REG_HUM_H = const(0x0)     # 2 bytes
 AM2320_REG_TEMP_H = const(0x2)    # 2 bytes
@@ -115,14 +119,14 @@ class AM2320Cached:
         .. code-block:: python
 
             import board
-            import adafruit_am2320_ext
+            import rivimey_am2320_cached
 
         Once this is done you can define your `board.I2C` object and define your sensor object
 
         .. code-block:: python
 
             i2c = board.I2C()   # uses board.SCL and board.SDA
-            am = adafruit_am2320_ext.AM2320Cached(i2c)
+            am = rivimey_am2320_cached.AM2320Cached(i2c)
 
         Now you have access to the temperature using :attr:`temperature` attribute and
         the relative humidity using the :attr:`relative_humidity` attribute
@@ -131,6 +135,25 @@ class AM2320Cached:
 
             temperature = am.temperature
             relative_humidity = am.relative_humidity
+
+        If you want to force a real read at the earliest opportunity, you can
+        reset the cache before reading. However, the device may not be able to
+        respond quickly. Resetting the cache and then read()ing will also reset
+        the cadence of actual device reads.
+
+        .. code-block:: python
+
+            am.reset_cache()
+            temperature = am.temperature
+
+        To discover if a read request would fetch a new value or not, the
+        :attr:`expired` property checks the current time against the expected
+        time. No I2C interaction is involved.
+
+        .. code-block:: python
+
+            if am.expired:
+                temperature = am.temperature
 
     """
 
@@ -152,6 +175,14 @@ class AM2320Cached:
         raise ValueError("AM2320 not found")
 
     @property
+    def expired(self):
+        """
+        True if the last read was more than `expiry` ms ago.
+        If so, a read_register call will read the device.
+        """
+        return (time_monotonic_ms() - self.lastread_time) > self._expires
+
+    @property
     def expiry(self):
         """
         The expiry time in milliseconds since the last read.
@@ -166,7 +197,7 @@ class AM2320Cached:
         Device minimum interval btw reads is 2s, so set expiry just
         below that time.
         """
-        if val > 1950:
+        if val > 1995:
             self._expires = val
         else:
             raise RuntimeError("expiry too short")
@@ -182,13 +213,14 @@ class AM2320Cached:
         Read temp and humidity registers with a 1ms (default) duration cache.
 
         Reading the device hardware takes several milliseconds, so if we
-        last read it very recently ago we're going to get a result faster
+        last read it very recently we're going to get a result faster
         by using the last value read. This is mostly of value when reading
-        both temp & humidity in the same cycle.
+        both temp & humidity in the same cycle (also incidentally ensuring
+        the two values were coincident).
 
         The downside of this is that we always read all 4 bytes, so taking
-        slightly longer c.f. a one value 2 byte read.  At 100KHz, 2 bytes
-        extra is approx 180us extra. However, if you always do two distinct
+        slightly longer compared with a single 2 byte read. At 100KHz, two
+        bytes is approx 180us. However, if you always do two distinct
         2 byte reads, overheads mean at least 50 times the wait, and maybe
         200x if the device has gone back to sleep (3s after last comms).
         """
@@ -196,14 +228,14 @@ class AM2320Cached:
             # This fn can only read temp & humidity & only as BE int16.
             raise RuntimeError("am2320 read reg error")
 
-        now = time_monotonic_ms()
-        if self._regbuffer is None or (now - self.lastread_time) > self._expires:
+        if self._regbuffer is None or self.expired:
             # HUM is 0, TEMP is 2, so read HUM..HUM+4 reads both.
             self._regbuffer = self._read_register(AM2320_REG_HUM_H, 4)
             self._lastread_time = time_monotonic_ms()
 
             # Device auto-sleeps after reading temp/hum. so will need
             # wake procedure to restart it.
+            now = time_monotonic_ms()
             self._lastwrite_time = now - AM2320_DEVHIBER_T
 
         return self._regbuffer[register:register+2]
